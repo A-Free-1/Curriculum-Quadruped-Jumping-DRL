@@ -1,1 +1,3 @@
-*.py[cod]
+**.py[cod]
+logs/
+__pycache__/

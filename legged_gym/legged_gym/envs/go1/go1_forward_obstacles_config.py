@@ -3,8 +3,8 @@ from isaacgym.torch_utils import *
 import numpy as np
 import torch
 
-class Go1UpwardsCfg( LeggedRobotCfg ):
-    task_name = 'go1_upwards'
+class Go1ForwardCfg( LeggedRobotCfg ):
+    task_name = 'go1_forward_obstacles'
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.32] # x,y,z [m]
         rel_foot_pos = [[0.1881,0.1881,-0.1881,-0.1881], # x
@@ -61,26 +61,28 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         distribution = "uniform" # "uniform" or "gaussian"
         class noise_scales(LeggedRobotCfg.noise.noise_scales):
             dof_vel = 1.0
-            contacts_noise_prob = 0.3
+            lin_vel = 0.6
+            ang_vel = 0.4
+            contacts_noise_prob = 0.1
 
     class env( LeggedRobotCfg.env ):
-        episode_length_s = 3 # episode length in seconds
+        episode_length_s = 4 # episode length in seconds
         use_state_history = True
         state_history_length = 20
         state_stored_length = 5
 
-        jump_type = "upward" # "upward" or "forward" or "forward_with_obstacles"
+        jump_type = "forward_with_obstacles" # "upward" or "forward" or "forward_with_obstacles"
 
-        continuous_jumping = False # if true: the robot states are not reset after each jump.
+        continuous_jumping = True # if true: the robot states are not reset after each jump.
         continuous_jumping_reset_probability = 0.9
-        use_springs = True
-        reset_height = 0.15 # [m]
-        reset_landing_error = 0.2 # [in m]
+        use_springs = False
+        reset_height = 0.12 # [m] Maybe decrease for obstacles?
+        reset_landing_error = 0.2 # [in %/100]
 
         debug_draw = False
         throttle_to_real_time = False
 
-        reset_orientation_error = 0.8 # [rad]
+        reset_orientation_error = 3. # [rad]
 
         known_contact_feet = True
         known_height = False
@@ -173,8 +175,8 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         push_upwards = False
         push_upwards_prob = 0.5
         
-        randomize_robot_pos = True
-        randomize_robot_vel = True
+        randomize_robot_pos = False
+        randomize_robot_vel = False
         randomize_robot_ori = True
         randomize_dof_pos = True
         randomize_spring_params = True
@@ -182,14 +184,14 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         randomize_PD_gains = True
 
         randomize_has_jumped = True # Randomize if the robot has jumped or not at the start of the episode
-        has_jumped_random_prob = 0.8
+        has_jumped_random_prob = 0.6
         reset_has_jumped = True # Whether to reset the has_jumped to False at a random point of the episode
         manual_has_jumped_reset_time = 0 # Manual time at which to reset has_jumped (in steps)
         # Curriculum:
         curriculum = False # Enable initial state randomisation curriculum
         rand_vel_interval_ep = 5 # How many episodes until curriculum is changed
         # At the first flight step, set the velocity of the agent to the desired one
-        push_towards_goal = False
+        push_towards_goal = True
         sim_latency = True
         base_latency = 0 # in ms
         sim_pd_latency = False
@@ -224,8 +226,8 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             # At each curriculum step the range changes by the increment step:
             pos_variation_increment = [0.0,0.005]
             vel_variation_increment = [0.01,0.01]
-            min_ori_euler = [-0.0,-0.0, -0.1]
-            max_ori_euler = [ 0.0, 0.0, 0.1]
+            min_ori_euler = [-0.05,-0.05, -0.5]
+            max_ori_euler = [ 0.05, 0.05, 0.5]
             ori_variation_increment = [0.001,0.001,0.01]
 
             spring_stiffness_percentage = 0.3 # in percentages
@@ -267,36 +269,35 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             #---------- Task rewards (once per episode): ----------- #
 
             # Rewards for reaching desired pose upon landing:
-            task_pos = 200.0 # Final reward is scale * (dt*decimation)
-            task_ori = 200.0
-            task_max_height = 2000.0 # Reward for maximum height (minus minimum height) achieved
-            
+            task_pos = 1500.0 # Final reward is scale * (dt*decimation)
+            task_ori = 1500.0
+            task_max_height = 5000.0 # Reward for maximum height (minus minimum height) achieved
+               
             termination = -20.
-            jumping = 50.
+            jumping = 200.
 
             #---------- Continuous rewards (at every time step): ----------- #
 
             # Rewards for maintaining desired pose AFTER landing:
             post_landing_pos = 3. # Reward for maintaining landing position
-            post_landing_ori = 3. # Reward for returning to desired orientation after landing
+            post_landing_ori = 6. # Reward for returning to desired orientation after landing
 
-            base_height_flight = 80. # Reward for being in the air, only active the first jump
-            base_height_stance = 5. # Reward for maintaining standing config after first jump
+            base_height_flight = 100. # Reward for being in the air, only active the first jump
+            base_height_stance = 20. # Reward for maintaining standing config after first jump
 
-            tracking_lin_vel = 5.0 # Reward for tracking desired linear velocity
-            tracking_ang_vel = 0.5 # Reward for tracking desired angular velocity
+            tracking_lin_vel = 30.0 # Reward for tracking desired linear velocity
+            tracking_ang_vel = 5.0 # Reward for tracking desired angular velocity
             symmetric_joints = -3. # Reward for symmetric joint angles b/w left and right legs
-            default_pose = 6. # Reward for staying close to default pose post landing
+            default_pose = 12. # Reward for staying close to default pose post landing
             feet_distance = -20.0 # Reward for keeping feet close to the body in flight
 
             #---------- Regularisation rewards: ----------- #
 
-            energy_usage_actuators = -1e-2 # Additional energy usage penalty for the actuators.
-            torques_actuators = -0.0 # Penalty for large torques
+            energy_usage_actuators = -1e-3 # Additional energy usage penalty for the actuators.
 
-            base_acc = -1e-6 # Penalty for large base acceleration
-            change_of_contact = 0.0 # Reward for maintaining contact state
-            early_contact = 5.0 # Reward for maintaining contact with ground early in the episode
+            base_acc = -0.0 # Penalty for large base acceleration
+            change_of_contact = 10.0 # Penalty for changing contact state
+            early_contact = 0.0 # Reward for maintaining contact with ground early in the episode
             feet_contact_forces = -5.0# Penalty for large contact forces at the feet
             action_rate = -0.2 # Penalty for large change of actions
             action_rate_second_order = -0.0 # Penalty for large change of action rate
@@ -321,37 +322,42 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         squat_reward_sigma = 0.001
         stance_reward_sigma = 0.005
         dof_pos_sigma = 0.1
+        stand_still_sigma = 0.1
+        feet_distance_sigma = 0.2
 
         vel_tracking_sigma = 0.1
+        orientation_sigma = 0.01
 
         # penalty_sigma = 0.5
         soft_dof_pos_limit = 0.9
         soft_dof_vel_limit = 0.95
         soft_torque_limit = 1.0
 
-        sigma_rew_neg = 0.2
+        sigma_rew_neg = 0.05
         sigma_neg_rew_curriculum = False
-        sigma_neg_rew_curriculum_duration = 1000 # in update steps (= 5*episodes)
+        sigma_neg_rew_curriculum_duration = 2000 # in update steps (= 5*episodes)
         sigma_neg_rew_initial_duration = 1000 # Keep at initial value for this many update steps
 
-        max_contact_force = 150.0
+        max_contact_force = 200.0
+
+
 
     class normalization( LeggedRobotCfg.normalization ):
         clip_actions = 100.
 
     class commands():
-        jump_over_box = False
+        jump_over_box = True
         num_commands = 13 # default: relative x,y,z for jump and desired quaternion (euler angles use xyz notation)
         # and 6 for centre of object and its dimensions.
         upward_jump_probability = 0.1
-        curriculum = False
+        curriculum = True
         curriculum_type = "time-based"
         randomize_commands = True
         curriculum_interval = 5
         max_curriculum = 1.
 
         num_levels = 11
-        randomize_yaw = False
+        randomize_yaw = True
         
         class ranges(): 
             # The command distances are relative to the initial agent position and are sampled from
@@ -363,8 +369,8 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             pos_dz_lim = [-0.0,0.0]
             # These are the starting ranges for the jump's distances (i.e. if curriculum 
             # if off, these stay the same for the whole training.)
-            pos_dx_ini = [0.0,0.0]
-            pos_dy_ini = [-0.0,0.0]
+            pos_dx_ini = [0.0,1.]
+            pos_dy_ini = [-0.3,0.3]
             pos_dz_ini = [0.0,0.0]
             # These are the steps for the jump distance changes every curriculum update.
             pos_variation_increment = [0.01,0.01,0.01]
@@ -400,7 +406,7 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         # terrain_width = 8.
         num_rows = 30
         num_cols = 30
-        vertical_scale = 0.005 # [m]
+        # vertical_scale = 0.001 # [m]
         border_size = 5 # [m]
         # max_init_terrain_level = 4
 
@@ -414,7 +420,7 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         class physx(LeggedRobotCfg.sim.physx):
             solver_type = 1 # 0: pgs
 
-class Go1UpwardsCfgPPO( LeggedRobotCfgPPO ):
+class Go1ForwardCfgPPO( LeggedRobotCfgPPO ):
 
     class policy( LeggedRobotCfgPPO.policy ):
         actor_hidden_dims = [256, 128, 64]
@@ -439,3 +445,5 @@ class Go1UpwardsCfgPPO( LeggedRobotCfgPPO ):
         run_name = ''
         experiment_name = 'test_go1'
         num_steps_per_env = 24 # Try 30?
+
+  

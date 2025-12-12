@@ -42,6 +42,8 @@ python train.py --task="go1_upwards" --max_iterations=3000 --headless
 python train.py --task="go1_forward" --max_iterations=10000 --headless --resume --load_run=RUN_ID
 ```
 where RUN_ID is the training run ID you want to resume from (leave -1 for the last one.)
+3. 
+python train.py --task="go1_forward_obstacles" --max_iterations=10000 --headless --resume --load_run=RUN_ID
 
 To evaluate your policy you can play around with the settings in `scripts/test.py`.
 

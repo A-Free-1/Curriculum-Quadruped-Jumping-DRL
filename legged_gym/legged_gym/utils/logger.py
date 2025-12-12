@@ -30,6 +30,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from collections import defaultdict
 from multiprocessing import Process, Value
 
@@ -51,7 +52,12 @@ class Logger:
     def log_rewards(self, dict, num_episodes):
         for key, value in dict.items():
             if 'rew' in key:
-                self.rew_log[key].append(value.item() * num_episodes)
+                # 处理不同类型的数据
+                if isinstance(value, torch.Tensor):
+                    self.rew_log[key].append(value.item() * num_episodes)
+                else:
+                    # 如果是numpy数组或Python标量
+                    self.rew_log[key].append(float(value) * num_episodes)
         self.num_episodes += num_episodes
 
     def reset(self):

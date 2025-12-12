@@ -320,7 +320,7 @@ class LeggedRobot(BaseTask):
             self.reset_buf[torch.any(torch.abs((self.actions - self.last_actions)/self.dt) > 600,dim=-1)] = True
             # self.reset_buf[torch.any(torch.abs((self.actions - 2*self.last_actions + self.last_last_actions) / (self.dt**2)) > 30000,dim=-1)] = True
 
-            grav_acc_violated = (self.base_acc[:,2] < -9.81) * (self.base_acc_prev[:,2] < -9.81) * ~torch.all(~self.contacts,dim=-1)#~self.mid_air
+            grav_acc_violated = (self.base_acc[:,2] < -1.63) * (self.base_acc_prev[:,2] < -1.63) * ~torch.all(~self.contacts,dim=-1)#~self.mid_air
             self.reset_buf[grav_acc_violated] = True        
 
         # If joint velocity exceeds a threshold, reset:
@@ -985,7 +985,7 @@ class LeggedRobot(BaseTask):
             self.gravities[:, :] = external_force.unsqueeze(0)
 
         sim_params = self.gym.get_sim_params(self.sim)
-        gravity = self.gravities[0, :] + torch.Tensor([0, 0, -9.81]).to(self.device)
+        gravity = self.gravities[0, :] + torch.Tensor([0, 0, -1.63]).to(self.device)
         sim_params.gravity = gymapi.Vec3(gravity[0], gravity[1], gravity[2])
         self.gym.set_sim_params(self.sim, sim_params)
 
@@ -2797,7 +2797,8 @@ class LeggedRobot(BaseTask):
             return rew
     
 
-        max_height_reward = (self.max_height[env_ids] - 0.9)
+        max_height_reward = (self.max_height[env_ids] - )
+        
 
         rew[env_ids] = torch.exp(-torch.square(max_height_reward)/self.cfg.rewards.max_height_reward_sigma)
 
