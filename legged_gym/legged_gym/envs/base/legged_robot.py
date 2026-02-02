@@ -187,6 +187,19 @@ class LeggedRobot(BaseTask):
 
         self.base_lin_vel_imu += quat_rotate_inverse(self.base_quat,self.imu_state[:, 0:3]) * self.dt 
         
+        # 相对地面高度
+        self.base_height = self.root_states[:,2] - self.get_terrain_height(self.root_states[:,:2]).flatten()
+
+        # # 空中阶段
+        # self.mid_air = self.base_height > 0.05   # 离地 5cm 即认为空中
+
+        # 下降阶段（用于 reward 分段） # 略高于站立高度
+        self.descending_phase = self.mid_air * (self.base_height < 0.85 * self.max_height) * (self.base_height > 0.35)
+
+
+
+
+
         # self.action_rate_stored = torch.cat((self.action_rate_stored,((self.actions - self.last_actions) / self.dt).unsqueeze(0)),dim=0)
         # self.base_acc_stored = torch.cat((self.base_acc_stored,((self.root_states[:, 7:10] - self.last_root_vel[:, :3]) / self.dt).unsqueeze(0)),dim=0)
         # self.dof_acc_stored = torch.cat((self.dof_acc_stored,self.dof_acc.unsqueeze(0)),dim=0)
@@ -263,7 +276,8 @@ class LeggedRobot(BaseTask):
         idx = self.mid_air * ~self.has_jumped * self.was_in_flight
         # idx = torch.logical_and(self.mid_air,~self.has_jumped)
         self.max_height[idx] = torch.max(self.max_height[idx],self.root_states[idx, 2]) # update max height achieved
-        
+        print(f"height: {self.max_height[idx]}")
+
         self.min_height[~self.has_jumped] = torch.min(self.min_height[~self.has_jumped], self.root_states[~self.has_jumped, 2]) # update min height achieved
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
@@ -2094,6 +2108,8 @@ class LeggedRobot(BaseTask):
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         self.contacts = torch.ones(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.ori_error = torch.zeros(self.num_envs, 1,dtype=torch.float, device=self.device, requires_grad=False)
+        self.base_height = torch.zeros(self.num_envs, 1,dtype=torch.float, device=self.device, requires_grad=False)
+        self.descending_phase = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
         # self.error_quat = torch.zeros(self.num_envs, 4,dtype=torch.float, device=self.device, requires_grad=False)
         if self.cfg.terrain.measure_heights:
             self.height_points = self._init_height_points()
@@ -2743,6 +2759,7 @@ class LeggedRobot(BaseTask):
             
             tracking_error  = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
             
+            # 
             # Track landing position deviation:
             tracking_error[env_ids] = torch.linalg.norm(self.root_states[env_ids,:2] - self.landing_poses[env_ids,:2],dim=1)
             
@@ -2773,20 +2790,130 @@ class LeggedRobot(BaseTask):
 
         return rew
 
-
     def _reward_jumping(self):
-        # Reward if the robot has jumped in the episode:
         env_ids = torch.logical_or(self.episode_length_buf == self.max_episode_length,
                   torch.logical_and(self.reset_buf, self.episode_length_buf < self.max_episode_length))
 
-
         rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
         
-        rew[env_ids * self.has_jumped * self.max_height>0.50] = 1        
+        # 简单逻辑：
+        # 1. 如果跳跃了：基础奖励 + 高度奖励
+        # 2. 如果没跳跃：惩罚
+        
+        jump_idx = env_ids * self.has_jumped
+        no_jump_idx = env_ids * ~self.has_jumped* self.was_in_flight
+        
+        # 跳跃的奖励 = 基础1.0 + 高度*0.5
+        rew[jump_idx] = 1.0 + self.max_height[jump_idx] * 0.5
+        
+        # 没跳跃的惩罚
+        rew[no_jump_idx] = -1.0
         
         return rew
+
+    # def _reward_jumping(self):
+    #     env_ids = torch.logical_or(self.episode_length_buf == self.max_episode_length,
+    #               torch.logical_and(self.reset_buf, self.episode_length_buf < self.max_episode_length))
+
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+        
+    #     # 关键：从0.2米就开始奖励！原先是1.50米
+    #     # 使用soft奖励，而不是0/1奖励
+    #     height_condition = torch.clamp(self.max_height, min=0.0, max=2.7)
+    #     soft_reward = torch.tanh(height_condition * 2)  # 0.2m->0.38, 0.5m->0.76, 1.0m->0.96
+        
+    #     rew[env_ids * self.has_jumped] = soft_reward[env_ids * self.has_jumped]
+        
+    #     return rew
+
+    # def _reward_jumping(self):
+    #     # Reward if the robot has jumped in the episode:
+    #     env_ids = torch.logical_or(self.episode_length_buf == self.max_episode_length,
+    #               torch.logical_and(self.reset_buf, self.episode_length_buf < self.max_episode_length))
+
+
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+        
+    #     rew[env_ids * self.has_jumped * self.max_height>0.50] = 1        
+        
+    #     return rew
      
+    # def _reward_task_max_height(self):
+    #     env_ids = torch.logical_and(self.episode_length_buf == self.max_episode_length, self.has_jumped)
+
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+
+    #     if torch.all(env_ids == False):
+    #         return rew
+        
+    #     current_height = self.max_height[env_ids]
+        
+    #     # 打印统计信息
+    #     if torch.any(env_ids):
+    #         mean_height = torch.mean(current_height).item()
+    #         max_height = torch.max(current_height).item()
+    #         print(f"平均={mean_height:.3f}m, 最高={max_height:.3f}m, 目标=2.7m")
+        
+
+    #     # 简单明确的奖励函数：鼓励跳高，以2.7米为目标
+    #     target_height = 2.7
+        
+    #     # 方案1：简单线性+高斯混合（推荐）
+    #     # 线性部分：越高越好
+    #     linear_part = current_height * 0.3  # 每米0.3奖励
+    #     # 高斯部分：奖励接近2.7米
+    #     gaussian_part = torch.exp(-torch.square(current_height - target_height) / self.cfg.rewards.max_height_reward_sigma) * 2.0
+        
+    #     # 总奖励
+    #     rew[env_ids] = linear_part + gaussian_part
+        
+    #     return rew
     
+    # def _reward_task_max_height(self):
+    #     env_ids = torch.logical_and(self.episode_length_buf == self.max_episode_length, self.has_jumped)
+
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+
+    #     if torch.all(env_ids == False):
+    #         return rew
+        
+    #     current_height = self.max_height[env_ids]
+        
+    #     if torch.any(env_ids):
+    #         mean_height = torch.mean(current_height).item()
+    #         print(f"平均最大高度: {mean_height:.3f}m")
+
+    #     # # 调试输出
+    #     # if torch.any(env_ids) and np.random.random() < 0.01:  # 1%概率打印
+    #     #     print(f"[调试] 平均最大高度: {torch.mean(current_height).item():.2f}m")
+        
+    #     # 渐进式目标：根据当前表现调整
+    #     # 如果平均高度<0.5m，目标=0.5m；如果<1.0m，目标=1.0m；否则目标=2.7m
+    #     mean_height = torch.mean(current_height).item()
+    #     if mean_height < 0.5:
+    #         target = 0.5
+    #     elif mean_height < 1.0:
+    #         target = 1.0
+    #     elif mean_height < 1.8:
+    #         target = 1.8
+    #     else:
+    #         target = 2.7
+        
+    #     # 三部分奖励：
+    #     # 1. 基础奖励：只要跳起来就有奖励（激励探索）
+    #     base_reward = torch.tanh(current_height * 2) * 0.5
+        
+    #     # 2. 目标奖励：接近目标（高斯奖励）
+    #     target_reward = torch.exp(-torch.square(current_height - target) / self.cfg.rewards.max_height_reward_sigma)
+        
+    #     # 3. 高度奖励：越高越好（线性奖励）
+    #     height_reward = current_height * 0.2
+        
+    #     rew[env_ids] = base_reward + target_reward + height_reward
+        
+    #     return rew
+
+
     def _reward_task_max_height(self):
         # Reward for max height achieved during the episode:
         env_ids = torch.logical_and(self.episode_length_buf == self.max_episode_length,self.has_jumped)
@@ -2795,9 +2922,16 @@ class LeggedRobot(BaseTask):
 
         if torch.all(env_ids == False): # if no env is done return 0 reward for all
             return rew
-    
+        current_height = self.max_height[env_ids]
+            
+        # 打印统计信息
+        if torch.any(env_ids):
+            mean_height = torch.mean(current_height).item()
+            max_height = torch.max(current_height).item()
+            print(f"平均={mean_height:.3f}m, 最高={max_height:.3f}m, 目标=1.8m")
+        
 
-        max_height_reward = (self.max_height[env_ids] - )
+        max_height_reward = (current_height - 1.8)
         
 
         rew[env_ids] = torch.exp(-torch.square(max_height_reward)/self.cfg.rewards.max_height_reward_sigma)
@@ -2857,30 +2991,46 @@ class LeggedRobot(BaseTask):
 
         # Only reward if in mid_air, hasn't jumped and height is above 0.45
         base_height = self.root_states[:,2] - self.get_terrain_height(self.root_states[:,:2]).flatten()
-        rew[base_height<=0.45] = 0.0
+        rew[base_height<=0.80] = 0.0
         rew[~self.mid_air] = 0.0
         rew[self.has_jumped] = 0.0
 
         return rew
     
+    # def _reward_base_height_flight(self):
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+        
+    #     # 只在需要跳跃的环境且已经跳跃了的情况下计算
+    #     should_jump_idx = self.was_in_flight  # 或者根据你的逻辑判断是否需要跳跃
+        
+    #     if self.jump_type == "upwards":
+    #         target_height = 0.7
+    #     else:
+    #         target_height = 0.8
+        
+    #     # 奖励最大高度接近目标高度
+    #     height_diff = self.max_height[should_jump_idx] - target_height
+    #     rew[should_jump_idx] = torch.exp(-torch.square(height_diff) / self.cfg.rewards.flight_reward_sigma)
+        
+    #     return rew
 
-    def _reward_base_height_flight(self):
-        # Reward flight height
-        rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
+    # def _reward_base_height_flight(self):
+    #     # Reward flight height
+    #     rew = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
 
 
-        if self.jump_type == "upwards":
-            base_height_flight = (self.root_states[self.mid_air, 2] - 0.7)
-        else:
-            base_height_flight = (self.root_states[self.mid_air, 2] - 0.8)
+    #     if self.jump_type == "upwards":
+    #         base_height_flight = (self.root_states[self.mid_air, 2] - 0.7)
+    #     else:
+    #         base_height_flight = (self.root_states[self.mid_air, 2] - 0.8)
 
-        rew[self.mid_air] = torch.exp(-torch.square(base_height_flight)/self.cfg.rewards.flight_reward_sigma)
+    #     rew[self.mid_air] = torch.exp(-torch.square(base_height_flight)/self.cfg.rewards.flight_reward_sigma)
 
-        rew[self.has_jumped + ~self.mid_air] = 0.
+    #     rew[self.has_jumped + ~self.mid_air] = 0.
 
 
 
-        return rew 
+    #     return rew 
     
     def _reward_base_height_stance(self):
         # Reward feet height
@@ -2902,18 +3052,43 @@ class LeggedRobot(BaseTask):
         return rew 
     
     def _reward_symmetric_joints(self):
-        # Reward the joint angles to be symmetric on each side of the body:
+        """
+        奖励镜像对称性：左前腿与右前腿对称，左后腿与右后腿对称
+        并且前腿与后腿也对称（这需要机器人的前后腿结构相同）
+        """
         dof = self.dof_pos.clone().view(self.num_envs, 4, int(self.num_dof/4))
-        # # Multiply the right side hips by -1 to match the sign of the left side:
-        dof[:,1,0] *= -1
-        dof[:,3,0] *= -1
         
-        err = torch.sum(torch.abs(dof[:,0,:] - dof[:,1,:]),axis=1) + torch.sum(torch.abs(dof[:,2,:] - dof[:,3,:]),axis=1)
-        # Also symmetry on the foot contacts:
-        # contacts = self.contacts.float()
-        # err += 5*( (torch.abs(contacts[:,0] - contacts[:,1])) + (torch.abs(contacts[:,2] - contacts[:,3])) )
+        # 调整右侧腿的符号
+        dof[:,1,0] *= -1  # 右前腿髋关节
+        dof[:,3,0] *= -1  # 右后腿髋关节
+        
+        # 1. 左右对称性（前腿之间，后腿之间）
+        left_right_err = torch.sum(torch.abs(dof[:,0,:] - dof[:,1,:]), axis=1) + torch.sum(torch.abs(dof[:,2,:] - dof[:,3,:]), axis=1)
+        
+        # 2. 前后对称性（前左与后左，前右与后右）
+        front_back_err = torch.sum(torch.abs(dof[:,0,:] - dof[:,2,:]), axis=1) + torch.sum(torch.abs(dof[:,1,:] - dof[:,3,:]), axis=1)
+        
+        # 3. 对角线对称性（左前与右后，右前与左后）
+        diagonal_err = torch.sum(torch.abs(dof[:,0,:] - dof[:,3,:]), axis=1) + torch.sum(torch.abs(dof[:,1,:] - dof[:,2,:]), axis=1)
+        
+        # 总误差（可以调整权重）
+        total_err = left_right_err * 0.5 + front_back_err * 0.3 + diagonal_err * 0.2
+        
+        return total_err  # 返回负误差作为奖励
 
-        return err
+    # def _reward_symmetric_joints(self):
+    #     # Reward the joint angles to be symmetric on each side of the body:
+    #     dof = self.dof_pos.clone().view(self.num_envs, 4, int(self.num_dof/4))
+    #     # # Multiply the right side hips by -1 to match the sign of the left side:
+    #     dof[:,1,0] *= -1
+    #     dof[:,3,0] *= -1
+        
+    #     err = torch.sum(torch.abs(dof[:,0,:] - dof[:,1,:]),axis=1) + torch.sum(torch.abs(dof[:,2,:] - dof[:,3,:]),axis=1)
+    #     # Also symmetry on the foot contacts:
+    #     # contacts = self.contacts.float()
+    #     # err += 5*( (torch.abs(contacts[:,0] - contacts[:,1])) + (torch.abs(contacts[:,2] - contacts[:,3])) )
+
+    #     return err
 
     
     def _reward_default_pose(self):
@@ -3050,3 +3225,93 @@ class LeggedRobot(BaseTask):
         # penalize high contact forces
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
     
+    def _reward_leg_extension_descend(self):
+        rew = torch.zeros(self.num_envs, device=self.device)
+
+        descending = self.descending_phase * (~self.has_jumped)
+        if not torch.any(descending):
+            return rew
+
+        # 脚在 body frame
+
+        feet_relative = self.feet_pos[:, :, :3] - self.root_states[:, :3].unsqueeze(1)
+        feet_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device, requires_grad=False)
+        for i in range(4):
+            feet_body_frame[:,i,:] = quat_rotate_inverse(self.base_quat, feet_relative[:,i,:])
+
+        feet_z = feet_body_frame[:, :, 2]
+
+        # 目标：向下伸腿，但不过度
+        z_target = -0.32
+        z_error = feet_z - z_target
+
+        rew_descend = torch.exp(-torch.mean(z_error ** 2, dim=1)/self.cfg.rewards.leg_extension_sigma)
+
+        rew[descending] = rew_descend[descending]
+        return rew
+
+    def _reward_upright_in_air(self):
+        rew = torch.zeros(self.num_envs, device=self.device)
+
+        mid_air = self.mid_air * (~self.has_jumped)
+        if not torch.any(mid_air):
+            return rew
+        # body z axis in world frame
+        # 修复：创建与 base_quat 批次大小匹配的向量
+        z_vector = torch.tensor([0.0, 0.0, 1.0], device=self.device)
+        # 扩展为 [num_envs, 3] 形状
+        z_body_local = z_vector.repeat(self.num_envs, 1)
+        
+        # 现在形状匹配：self.base_quat [num_envs, 4]，z_body_local [num_envs, 3]
+        z_body_world = quat_apply(self.base_quat, z_body_local)
+
+        upright_score = z_body_world[:, 2]  # cos(theta)
+
+        # 只奖励正的，避免反向鼓励
+        rew[mid_air] = torch.clamp(upright_score[mid_air], min=0.0)
+        return rew
+
+    def _reward_no_forward_leg_lift(self):
+        rew = torch.zeros(self.num_envs, device=self.device)
+
+        ascending = self.mid_air * (~self.descending_phase) * (~self.has_jumped)
+        if not torch.any(ascending):
+            return rew
+
+        feet_relative = self.feet_pos[:, :, :3] - self.root_states[:, :3].unsqueeze(1)
+        feet_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device, requires_grad=False)
+        for i in range(4):
+            feet_body_frame[:,i,:] = quat_rotate_inverse(self.base_quat, feet_relative[:,i,:])
+
+
+        feet_x = feet_body_frame[:, :, 0]   # 前(+)/后(-)
+
+        # 允许一点前摆，但不要太多
+        forward_penalty = torch.mean(torch.clamp(feet_x - 0.08, min=0.0) ** 2, dim=1)
+
+        rew[ascending] = forward_penalty[ascending]
+        return rew
+    
+    def _reward_air_front_leg_penalty(self):
+        rew = torch.zeros(self.num_envs, device=self.device)
+
+        air = self.mid_air * (~self.has_jumped)
+        if not torch.any(air):
+            return rew
+
+        feet_relative = self.feet_pos[:, :, :3] - self.root_states[:, :3].unsqueeze(1)
+        feet_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device, requires_grad=False)
+        for i in range(4):
+            feet_body_frame[:,i,:] = quat_rotate_inverse(self.base_quat, feet_relative[:,i,:])
+
+        feet_x = feet_body_frame[:, :, 0]   # 前(+)
+        feet_z = feet_body_frame[:, :, 2]   # 上(+)
+
+        # 同时“前 + 高”
+        bad_mask = (feet_x > 0.08) & (feet_z > -0.15)
+
+        # 违反的腿越多，惩罚越大
+        penalty = bad_mask.float().sum(dim=1) / 4.0
+
+        rew[air] = penalty[air]
+        return rew

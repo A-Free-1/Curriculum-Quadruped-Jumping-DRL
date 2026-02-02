@@ -71,9 +71,9 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
 
         jump_type = "upward" # "upward" or "forward" or "forward_with_obstacles"
 
-        continuous_jumping = False # if true: the robot states are not reset after each jump.
+        continuous_jumping = True # if true: the robot states are not reset after each jump.
         continuous_jumping_reset_probability = 0.9
-        use_springs = True
+        use_springs = False
         reset_height = 0.15 # [m]
         reset_landing_error = 0.2 # [in m]
 
@@ -131,11 +131,11 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         # PD Drive parameters:
         control_type = 'P'  
         # control_type = 'actuator_net'
-        stiffness = {'joint': 20.}  # [N*m/rad]
-        damping = {'joint': 0.5}     # [N*m*s/rad]
+        stiffness = {'joint': 80.}  # [N*m/rad]
+        damping = {'joint': 2.0}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.25
-        hip_scale_reduction = 0.5 # Reduce the hip action scaling factor
+        action_scale = 0.50
+        hip_scale_reduction = 0.8 # Reduce the hip action scaling factor
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
 
@@ -163,26 +163,26 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         use_physx_armature = False
   
     class domain_rand ( LeggedRobotCfg.domain_rand ):
-        push_robots = True
+        push_robots = False
         push_interval_s = 1.
         max_push_vel_xy = 1.
 
         # Randomise some of the initial robot states:
-        pos_vel_random_prob = 0.7
+        pos_vel_random_prob = 0.0
 
         push_upwards = False
-        push_upwards_prob = 0.5
+        push_upwards_prob = 0.0
         
-        randomize_robot_pos = True
-        randomize_robot_vel = True
-        randomize_robot_ori = True
+        randomize_robot_pos = False
+        randomize_robot_vel = False
+        randomize_robot_ori = False
         randomize_dof_pos = True
         randomize_spring_params = True
         randomize_motor_strength = True
         randomize_PD_gains = True
 
-        randomize_has_jumped = True # Randomize if the robot has jumped or not at the start of the episode
-        has_jumped_random_prob = 0.8
+        randomize_has_jumped = False # Randomize if the robot has jumped or not at the start of the episode
+        has_jumped_random_prob = 0.0
         reset_has_jumped = True # Whether to reset the has_jumped to False at a random point of the episode
         manual_has_jumped_reset_time = 0 # Manual time at which to reset has_jumped (in steps)
         # Curriculum:
@@ -219,7 +219,7 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             max_robot_vel = [0.0,0.0,3.0] # max velocity [m/s] 
 
             min_robot_pos = [-0.0, 0.0, 0.0] # min robot pos [m] (relative to base height 0.32)
-            max_robot_pos = [-0.0, 0.0, 0.7] # min robot pos [m] (relative to base height 0.32)
+            max_robot_pos = [-0.0, 0.0, 0.05] # min robot pos [m] (relative to base height 0.32)
 
             # At each curriculum step the range changes by the increment step:
             pos_variation_increment = [0.0,0.005]
@@ -271,8 +271,8 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             task_ori = 200.0
             task_max_height = 2000.0 # Reward for maximum height (minus minimum height) achieved
             
-            termination = -20.
-            jumping = 50.
+            termination = -1.
+            jumping = 100.
 
             #---------- Continuous rewards (at every time step): ----------- #
 
@@ -280,18 +280,22 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
             post_landing_pos = 3. # Reward for maintaining landing position
             post_landing_ori = 3. # Reward for returning to desired orientation after landing
 
-            base_height_flight = 80. # Reward for being in the air, only active the first jump
+            base_height_flight = 0. # Reward for being in the air, only active the first jump
             base_height_stance = 5. # Reward for maintaining standing config after first jump
 
             tracking_lin_vel = 5.0 # Reward for tracking desired linear velocity
             tracking_ang_vel = 0.5 # Reward for tracking desired angular velocity
             symmetric_joints = -3. # Reward for symmetric joint angles b/w left and right legs
-            default_pose = 6. # Reward for staying close to default pose post landing
-            feet_distance = -20.0 # Reward for keeping feet close to the body in flight
+            default_pose = 10. # Reward for staying close to default pose post landing
+            feet_distance = -1.0 # Reward for keeping feet close to the body in flight
+            leg_extension_descend = 10.0
+            upright_in_air = 5.0
+            no_forward_leg_lift = -1.0
+            air_front_leg_penalty = -5.0
 
             #---------- Regularisation rewards: ----------- #
 
-            energy_usage_actuators = -1e-2 # Additional energy usage penalty for the actuators.
+            energy_usage_actuators = -5e-3 # Additional energy usage penalty for the actuators.
             torques_actuators = -0.0 # Penalty for large torques
 
             base_acc = -1e-6 # Penalty for large base acceleration
@@ -316,25 +320,26 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         post_landing_pos_tracking_sigma = 0.001
         command_ori_tracking_sigma = 0.05
 
-        flight_reward_sigma = 0.1
-        max_height_reward_sigma = 0.05
+        flight_reward_sigma = 0.2
+        max_height_reward_sigma = 0.3
         squat_reward_sigma = 0.001
         stance_reward_sigma = 0.005
         dof_pos_sigma = 0.1
 
         vel_tracking_sigma = 0.1
+        leg_extension_sigma = 0.15
 
         # penalty_sigma = 0.5
         soft_dof_pos_limit = 0.9
         soft_dof_vel_limit = 0.95
         soft_torque_limit = 1.0
 
-        sigma_rew_neg = 0.2
+        sigma_rew_neg = 0.5
         sigma_neg_rew_curriculum = False
         sigma_neg_rew_curriculum_duration = 1000 # in update steps (= 5*episodes)
         sigma_neg_rew_initial_duration = 1000 # Keep at initial value for this many update steps
 
-        max_contact_force = 150.0
+        max_contact_force = 250.0
 
     class normalization( LeggedRobotCfg.normalization ):
         clip_actions = 100.
@@ -343,10 +348,10 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         jump_over_box = False
         num_commands = 13 # default: relative x,y,z for jump and desired quaternion (euler angles use xyz notation)
         # and 6 for centre of object and its dimensions.
-        upward_jump_probability = 0.1
+        upward_jump_probability = 1
         curriculum = False
         curriculum_type = "time-based"
-        randomize_commands = True
+        randomize_commands = False
         curriculum_interval = 5
         max_curriculum = 1.
 
@@ -372,7 +377,7 @@ class Go1UpwardsCfg( LeggedRobotCfg ):
         class distances(): # If you want to pass a fixed command distance, use these values:
             x = 0.0
             y = 0.0
-            z = 0.0
+            z = 1.8
             # Specify in Euler 'xyz' notation (order is important as it gets converted to quat later):
             # des_angles_euler = [0.0,0.0,0.0]
             des_yaw = None
